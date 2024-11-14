@@ -29,13 +29,6 @@ def build_dataset(is_train, args):
         root = os.path.join(args.data_path, 'train' if is_train else 'val')
         dataset = datasets.ImageFolder(root, transform=transform)
         nb_classes = 100
-    elif args.data_set == 'FLOWERS':
-        root = os.path.join(args.data_path, 'train' if is_train else 'test')
-        dataset = datasets.ImageFolder(root, transform=transform)
-        if is_train:
-            dataset = torch.utils.data.ConcatDataset(
-                [dataset for _ in range(100)])
-        nb_classes = 102
 
     return dataset, nb_classes
 
