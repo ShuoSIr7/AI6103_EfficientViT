@@ -202,6 +202,25 @@ class InvertedResidualBlock(nn.Module):
         return self.conv3(self.act2(self.conv2(self.act1(self.conv1(x)))))
 
 
+class LocalWindowAttention(nn.Module):
+    def __init__(self, dim, key_dim, num_heads=8,
+                 attn_ratio=4,
+                 resolution=14,
+                 window_resolution=7,
+                 kernels=[5, 5, 5, 5]):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.resolution = resolution
+        assert window_resolution > 0, 'window_size must be greater than 0'
+        self.window_resolution = window_resolution
+
+        window_resolution = min(window_resolution, resolution)
+        self.attn = CascadedGroupAttention(dim, key_dim, num_heads,
+                                           attn_ratio=attn_ratio,
+                                           resolution=window_resolution,
+                                           kernels=kernels)
+                     
 class TokenInteractionBlock(nn.Module):
     """
     Token interaction through depthwise convolution.
