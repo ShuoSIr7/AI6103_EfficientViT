@@ -256,7 +256,6 @@ def main(args):
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    best_acc = 0.0
     # Open the log file for writing
     with open('training.logs', 'w') as log_file:
         log_file.write("Epoch,Train Loss,Train Acc,Val Loss,Val Acc\n")  # Header
@@ -279,7 +278,6 @@ def main(args):
     # torch.save(model.state_dict(), os.path.join(work_path, 'final_model.pth'))
     # torch.save(optimizer.state_dict(), os.path.join(work_path, 'final_optimizer.pth'))
 
-    print(f"Best Validation Accuracy: {best_acc:.2f}%")
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
