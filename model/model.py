@@ -291,7 +291,7 @@ class LocalWindowAttention(torch.nn.Module):
         # Only check this for classifcation models
         assert H == H_ and W == W_, 'input feature has wrong size, expect {}, got {}'.format((H, W), (H_, W_))
 
-        if H <= w and W <= w:
+        if H <= h and W <= w:
             x = self.attn(x)
         else:
             x = x.permute(0, 2, 3, 1)  # B,H,W,C
