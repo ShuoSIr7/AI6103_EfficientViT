@@ -200,26 +200,6 @@ class InvertedResidualBlock(nn.Module):
 
     def forward(self, x):
         return self.conv3(self.act2(self.conv2(self.act1(self.conv1(x)))))
-
-
-class LocalWindowAttention(nn.Module):
-    def __init__(self, dim, key_dim, num_heads=8,
-                 attn_ratio=4,
-                 resolution=14,
-                 window_resolution=7,
-                 kernels=[5, 5, 5, 5]):
-        super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        self.resolution = resolution
-        assert window_resolution > 0, 'window_size must be greater than 0'
-        self.window_resolution = window_resolution
-
-        window_resolution = min(window_resolution, resolution)
-        self.attn = CascadedGroupAttention(dim, key_dim, num_heads,
-                                           attn_ratio=attn_ratio,
-                                           resolution=window_resolution,
-                                           kernels=kernels)
                      
 class TokenInteractionBlock(nn.Module):
     """
@@ -260,6 +240,64 @@ class SubSamplingBlock(nn.Module):
         for i in range(self.ffn_depth):
             x = self.interact2[i](x)
             x = self.ffn2[i](x)
+        return x
+
+
+class LocalWindowAttention(torch.nn.Module):
+    def __init__(self, channels, qk_dim, num_heads=8,
+                 attn_ratio=4,
+                 resolution=14,
+                 window_resolution=7,
+                 kernels=[5, 5, 5, 5]):
+        super().__init__()
+        self.channels = channels
+        self.num_heads = num_heads
+        self.resolution = resolution
+        self.window_resolution = window_resolution
+
+        window_resolution = min(window_resolution, resolution)
+        self.attn = CascadedGroupAttention(channels, qk_dim, v_dim=attn_ratio,
+                                           num_heads=num_heads,resolution=window_resolution,
+                                           q_kernel_size=kernels)
+
+    def forward(self, x):
+        H = W = self.resolution
+        h = w = self.window_resolution
+        B, C, H_, W_ = x.shape
+        # Only check this for classifcation models
+        assert H == H_ and W == W_, 'input feature has wrong size, expect {}, got {}'.format((H, W), (H_, W_))
+
+        if H <= wr and W <= wr:
+            x = self.attn(x)
+        else:
+            x = x.permute(0, 2, 3, 1)  # B,H,W,C
+            pad_b = (h - H % h) % h
+            pad_r = (w - W % w) % w
+            padding = pad_b > 0 or pad_r > 0
+
+            if padding:
+                x = torch.nn.functional.pad(x, (0, 0, 0, pad_r, 0, pad_b))
+
+            H, W = H + pad_b, W + pad_r
+            nH,nW = H // h, W // w
+            # window partition, BHWC -> B(nH*h)(nW*w)C -> B,nH,nW,h,w,C -> (BnHnW)hwC -> (BnHnW)Chw
+            x = (
+                x.view(B, nH, h, nW, w, C)
+                .transpose(2, 3)
+                .reshape(B * nH * nW, h, w, C)
+                .permute(0, 3, 1, 2)
+            )
+            x = self.attn(x)
+            # window reverse, (BnHnW)Chw -> (BnHnW)hwC -> BnHnWhwC -> B(nHh)(nWw)C -> BHWC
+            x = (
+                x.permute(0, 2, 3, 1)
+                .view(B, nH, nW, wr, wr,C)
+                .transpose(2, 3)
+                .reshape(B, H, W, C)
+            )
+            if padding:
+                x = x[:, :H-pad_b, :W-pad_r].contiguous()
+            x = x.permute(0, 3, 1, 2) # B,H,W,C
         return x
 
 
