@@ -4,7 +4,6 @@ author: lqs
 """
 import torch
 from torch import nn
-
 # TODO: details below are not mentioned in the essay, not completed yet
 """
 The EfficientViT model structure leverage LeViT instead of ViT.
@@ -114,6 +113,27 @@ class BN_Linear(nn.Module):
         self.fused_linear = None
 
 
+class SqueezeExcite(nn.Module):
+    def __init__(self, in_channels, channel_scale=1/16):
+        super().__init__()
+        hid_channels = max(1, int(in_channels * channel_scale))
+        self.add_module('ap', nn.AdaptiveAvgPool2d((1, 1)))
+        self.add_module('fc1', nn.Conv2d(
+            in_channels, hid_channels, 1, 1, 0, 1, bias=True))
+        self.add_module('act1', nn.ReLU())
+        self.add_module('fc2', nn.Conv2d(
+            hid_channels, in_channels, 1, 1, 0, 1, bias=True))
+        self.add_module('act2', nn.Sigmoid())
+
+    def forward(self, x):
+        scale = self.ap(x)
+        scale = self.fc1(scale)
+        scale = self.act1(scale)
+        scale = self.fc2(scale)
+        scale = self.act2(scale)
+        return scale * x
+
+
 class OverlapPatchEmbedding(nn.Module):
     """
     ref: Levit: a vision transformer in convnet’s clothing for faster inference.
@@ -141,8 +161,6 @@ class OverlapPatchEmbedding(nn.Module):
 
     def forward(self, x):
         x = self.proj(x)
-        # TODO: Depends on input shape
-        x = x.permute(0, 2, 3, 1)
         return x
 
 
@@ -195,7 +213,8 @@ class InvertedResidualBlock(nn.Module):
         self.act1 = nn.ReLU(inplace=True)
         self.conv2 = Conv_BN(hidden_dim, hidden_dim, 3, 2, 1, groups=hidden_dim)
         # using ReLU instead of SE in LeVit
-        self.act2 = nn.ReLU(inplace=True)
+        # self.act2 = nn.ReLU(inplace=True)
+        self.se = SqueezeExcite(hidden_dim, 1/4)
         self.conv3 = Conv_BN(hidden_dim, out_channels, 1, 1, 0)
 
     def forward(self, x):
@@ -220,7 +239,8 @@ class LocalWindowAttention(nn.Module):
                                            attn_ratio=attn_ratio,
                                            resolution=window_resolution,
                                            kernels=kernels)
-                     
+
+
 class TokenInteractionBlock(nn.Module):
     """
     Token interaction through depthwise convolution.
@@ -229,7 +249,7 @@ class TokenInteractionBlock(nn.Module):
 
     def __init__(self, channels, kernel_size=3):
         super(TokenInteractionBlock, self).__init__()
-        # stride is set to [kernel//2] to make sure input and output share same dimension
+        # padding is set to [kernel//2] to make sure input and output share same dimension
         self.dwconv = Conv_BN(channels, channels, kernel_size, 1, kernel_size // 2, groups=channels)
 
     def forward(self, x):
@@ -264,7 +284,7 @@ class SubSamplingBlock(nn.Module):
 
 
 class CascadedGroupAttention(nn.Module):
-    def __init__(self, channels, qk_dim, v_dim, num_heads, q_kernel_size):
+    def __init__(self, channels, qk_dim, v_dim, num_heads, q_kernel_size, resolution):
         super(CascadedGroupAttention, self).__init__()
         self.channels = channels
         self.qk_dim = qk_dim
@@ -272,7 +292,6 @@ class CascadedGroupAttention(nn.Module):
         self.num_heads = num_heads
         # pre_calculate
         self.sqrtd = self.qk_dim ** -0.5
-
         assert self.channels % self.num_heads == 0, "channels should be divisible by group"
         self.att_dim = self.channels // self.num_heads
         self.q = []
@@ -280,6 +299,7 @@ class CascadedGroupAttention(nn.Module):
         self.k = []
         self.v = []
         self.p = Conv_BN(self.num_heads * self.v_dim, channels)
+        self.act = nn.ReLU()
 
         for _ in range(num_heads):
             self.q.append(Conv_BN(self.att_dim, self.qk_dim))
@@ -287,7 +307,49 @@ class CascadedGroupAttention(nn.Module):
             self.v.append(Conv_BN(self.att_dim, self.v_dim))
             self.dwconv.append(TokenInteractionBlock(self.qk_dim, q_kernel_size))
 
+        # calc relative position
+        # gen coordinates
+        num_points = resolution * resolution
+        h_list = torch.arange(resolution)
+        w_list = torch.arange(resolution)
+        coords = torch.meshgrid([h_list, w_list])
+        coords = torch.stack(coords)
+        coords = torch.flatten(coords, 1)
+        coords1 = coords[:, :, None]
+        coords2 = coords[:, None, :]
+        relative_coords = abs(coords1 - coords2)
+        # relative positions denote by index
+        relative_positions = []
+        # relative positions map to index
+        relative_positions_index = {}
+        cnt = 0
+        for i in torch.arange(resolution):
+            for j in torch.arange(resolution):
+                cur_rc = (relative_coords[0][i][j], relative_coords[1][i][j])
+                if cur_rc not in relative_positions_index:
+                    relative_positions_index[cur_rc] = cnt
+                    cnt += 1
+                relative_positions.append(cnt)
+        # trainable parameter, maps index to attention bias
+        self.attention_bias = nn.Parameter(torch.zeros(num_heads, len(relative_positions_index)))
+        self.inference_attention_bias = None
+        # relative position index matrix of input
+        self.register_buffer('relative_positions',
+                             torch.LongTensor(relative_positions).view(resolution, resolution))
+
+    @torch.no_grad()
+    def train(self, mode=True):
+        super().train(mode)
+        # When in training mode, delete inference_attention_bias
+        if mode and hasattr(self, 'inference_attention_bias'):
+            del self.inference_attention_bias
+        else:
+            # Advanced Indexing
+            self.inference_attention_bias = self.attention_bias[:, self.relative_positions]
+
     def forward(self, x):
+        # attention_biases will be trained but
+        bias = self.attention_bias[:, self.relative_positions]
         B, C, H, W = x.shape
         # B*C/n*H*W
         att_in = x.chunk(self.num_heads, dim=1)
@@ -302,13 +364,14 @@ class CascadedGroupAttention(nn.Module):
             # BCHW -> BC(HW)
             q, k, v = q.flatten(2), k.flatten(2), v.flatten(2)
             # BC(HW) * B(HW)C -> B(HW)(HW)
-            qk = q.transpose(1, 2) * k
+            qk = q.transpose(1, 2) * k * self.sqrtd + (bias[i] if self.training else self.inference_attention_bias[i])
             # B(HW)(HW)
             qk = qk.softmax(dim=-1)
             # BC(HW) * B(HW)(HW) -> BC(HW) ->BCHW
             att_out = (v * qk.transpose(1, 2)).view(B, v.size(1), H, W)
             att_outs.append(att_out)
         x = torch.cat(att_outs, dim=1)
+        x = self.act(x)
         x = self.p(x)
         return x
 
