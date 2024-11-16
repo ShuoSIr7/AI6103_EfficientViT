@@ -315,7 +315,7 @@ class LocalWindowAttention(torch.nn.Module):
             # window reverse, (BnHnW)Chw -> (BnHnW)hwC -> BnHnWhwC -> B(nHh)(nWw)C -> BHWC
             x = (
                 x.permute(0, 2, 3, 1)
-                .view(B, nH, nW, w, w, C)
+                .view(B, nH, nW, h, w, C)
                 .transpose(2, 3)
                 .reshape(B, H, W, C)
             )
