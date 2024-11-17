@@ -100,7 +100,7 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument('--data-path', default='/root/autodl-tmp/imagenet100', type=str, # 数据路径（需替换）
                         help='dataset path')
-    parser.add_argument('--data-set', default='IMNET1000', choices=['CIFAR', 'IMNET1000', 'IMNET100'], # 指定数据集（需替换）
+    parser.add_argument('--data-set', default='IMNET100', choices=['CIFAR', 'IMNET1000', 'IMNET100'], # 指定数据集（需替换）
                         type=str, help='Image Net dataset path')
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -122,7 +122,9 @@ def get_args_parser():
     parser.set_defaults(pin_mem=True)
 
     # training parameters
-    parser.add_argument('--world_size', default=8, type=int,  # 8卡
+    parser.add_argument('--distributed', default=True, action='store_true',
+                        help='是否开启分布式')
+    parser.add_argument('--world_size', default=2, type=int,  # 需修改
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
@@ -264,7 +266,9 @@ def main(args):
     if args.distributed:  # 是否分布式训练
         init_distributed_mode(args)
         num_tasks = dist.get_world_size()
+        print(num_tasks)
         global_rank = dist.get_rank()
+        print(global_rank)
         if args.repeated_aug: # 是否重复数据增强
             sampler_train = RASampler(
                 dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
@@ -307,12 +311,21 @@ def main(args):
 
     # Model, criterion, optimizer, scheduler, mixup_fn
     model = EfficientViT_M0(num_classes=args.nb_classes,img_size=args.input_size).to(device)
+
+    model_without_ddp = model
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model_without_ddp = model.module
+
+        linear_scaled_lr = args.lr * args.batch_size * dist.get_world_size() / 512.0
+        args.lr = linear_scaled_lr
+
     print('number of classes:',args.nb_classes)
     print('number of params:', sum(p.numel() for p in model.parameters() if p.requires_grad))
 
     train_criterion = SoftTargetCrossEntropy() # mixUp对应软性交叉熵损失
     optimizer = optim.AdamW(
-        model.parameters(),
+        model_without_ddp.parameters(), #  model.parameters()
         lr=args.lr,
         weight_decay=args.weight_decay,
         eps=args.opt_eps,
