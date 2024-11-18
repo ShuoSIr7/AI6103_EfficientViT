@@ -362,12 +362,15 @@ def main(args):
         scheduler.step(epoch)
         current_lr = optimizer.param_groups[0]['lr']
 
+        start_val_time = time.time()
         val_loss, val_acc1, val_acc5 = validate(model, val_loader, device)
+        validation_time = time.time() - start_val_time
+        val_throughput = len(val_loader.dataset) / validation_time
 
         if args.rank == 0:  # 主进程打印和写日志
             print(f"Epoch {epoch} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, lr: {current_lr:.8f}")
-            print(f"Epoch {epoch} - Valid Loss: {val_loss:.4f}, Valid Acc: {val_acc1:.2f}%")
-            log_file.write(f"{epoch},{train_loss},{train_acc},{val_loss},{val_acc1},{val_acc5}\n")
+            print(f"Epoch {epoch} - Valid Loss: {val_loss:.4f}, Valid Acc: {val_acc1:.2f}%, Val Throughput: {val_throughput:.2f} img/s")
+            log_file.write(f"{epoch},{train_loss},{train_acc},{val_loss},{val_acc1},{val_acc5},{val_throughput}\n")
 
     if args.rank == 0:  # 主进程保存模型
         torch.save(model.module.state_dict(), os.path.join(work_path, 'M0.pth'))
