@@ -169,7 +169,7 @@ def init_distributed_mode(args):
     print(f'| distributed init (rank {args.rank}): {args.gpu}', flush=True)
     setup_for_distributed(args.rank == 0)  # 输出控制
 
-def train_step(model, train_loader, criterion, optimizer, mixup_fn, scaler, clip_grad, opt_eps, device):
+def train_step(model, train_loader, criterion, optimizer, mixup_fn, scaler=None, clip_grad, opt_eps, device):
     model.train()
     train_loss = 0.0
     correct = 0
@@ -179,17 +179,18 @@ def train_step(model, train_loader, criterion, optimizer, mixup_fn, scaler, clip
         inputs, targets = inputs.to(device), targets.to(device)
         inputs, targets = mixup_fn(inputs, targets)
 
-        # 使用 autocast 进行混合精度训练
-        with torch.amp.autocast('cuda'):
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
+        optimizer.zero_grad()
+        #with torch.amp.autocast('cuda'):
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
 
-        scaler.scale(loss).backward()  # 缩放并反向传播，计算梯度
+        #scaler.scale(loss).backward()  # 缩放并反向传播，计算梯度
+        loss.backward()
         adaptive_clip_grad(model.parameters(), clip_factor=clip_grad, eps=opt_eps)  # 自适应梯度裁剪
 
-        scaler.step(optimizer)  # 代替optimizer.step()更新参数
-        scaler.update()  # 更新缩放因子
-        optimizer.zero_grad()
+        #scaler.step(optimizer)  # 代替optimizer.step()更新参数
+        #scaler.update()  # 更新缩放因子
+        optimizer.step()
 
         train_loss += loss.item() * inputs.size(0)
         _, predicted = outputs.max(1)
@@ -216,9 +217,9 @@ def validate(model, valid_loader, device):
         for inputs, targets in valid_loader:
             inputs, targets = inputs.to(device), targets.to(device)
 
-            with torch.amp.autocast('cuda'):
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
+            #with torch.amp.autocast('cuda'):
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
 
             val_loss += loss.item() * inputs.size(0)
 
@@ -321,8 +322,10 @@ def main(args):
     )
     #scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * args.epochs,eta_min=args.min_lr)
     #scheduler = CosineLRScheduler(optimizer,t_initial=10,t_mul=1,lr_min=1e-6,warmup_t=0,warmup_lr_init=1e-6,cycle_limit=1,t_in_epochs=True)
-    scheduler, _ = create_scheduler(args, optimizer) # default: step on epoch
+    scheduler, _ = create_scheduler(args, optimizer) # default: step on
+
     scaler = torch.amp.GradScaler('cuda')
+
     mixup_fn = Mixup(
         mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
         prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
@@ -358,7 +361,7 @@ def main(args):
             train_loader.sampler.set_epoch(epoch)
 
         train_loss, train_acc = train_step(model, train_loader, train_criterion, optimizer,
-                                           scaler, mixup_fn, args.clip_grad, args.opt_eps, device)
+                                           mixup_fn, args.clip_grad, args.opt_eps, device)
         scheduler.step(epoch)
         current_lr = optimizer.param_groups[0]['lr']
 
@@ -374,17 +377,17 @@ def main(args):
 
             if epoch % args.save_freq == 0 or epoch == args.epochs - 1:
                 ckpt_path = os.path.join(output_dir, 'checkpoint_' + str(epoch) + 'epoch.pth')
-                    checkpoint_paths = [ckpt_path]
-                    print("Saving checkpoint to {}".format(ckpt_path))
-                    for checkpoint_path in checkpoint_paths:
-                        torch.save({
-                            'model': model_without_ddp.state_dict(),
-                            'optimizer': optimizer.state_dict(),
-                            'scheduler': scheduler.state_dict(),
-                            'epoch': epoch,
-                            'scaler': scaler.state_dict(),
-                            'args': args,
-                            }, checkpoint_path)
+                checkpoint_paths = [ckpt_path]
+                print("Saving checkpoint to {}".format(ckpt_path))
+                for checkpoint_path in checkpoint_paths:
+                    torch.save({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
+                    'epoch': epoch,
+                    'scaler': scaler.state_dict(),
+                    'args': args,
+                    }, checkpoint_path)
 
     if args.rank == 0:  # 关闭日志
         log_file.close()
