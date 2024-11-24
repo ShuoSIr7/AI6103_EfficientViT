@@ -42,7 +42,6 @@ class Conv_BN(nn.Module):
         )
         self.bn = nn.BatchNorm2d(out_channels)
         self.fused_conv = None
-        # initial parameters
         # default Kaiming initialization for Conv layer
         # initialize BN's gamma & beta
         nn.init.constant_(self.bn.weight, bn_init_weight)
@@ -88,8 +87,10 @@ class BN_Linear(nn.Module):
         self.bn = nn.BatchNorm1d(in_features)
         self.linear = nn.Linear(in_features, out_features, bias=True)
         self.fused_linear = None
-        # initialize linear as what ViT does
+        # initialize linear the same way as ViT
         nn.init.trunc_normal_(self.linear.weight, std=.02)
+        #if bias:
+        #    torch.nn.init.constant_(self.linear.bias, 0)
 
     def forward(self, x):
         if self.fused_linear is not None:
@@ -208,7 +209,7 @@ class InvertedResidualBlock(nn.Module):
     """
 
     def __init__(self, in_channels, out_channels):
-        super(InvertedResidualBlock, self).__init__()
+        super().__init__()
         hidden_dim = int(in_channels * 4)
         self.conv1 = Conv_BN(in_channels, hidden_dim, 1, 1, 0)
         self.act1 = nn.ReLU()
@@ -219,7 +220,7 @@ class InvertedResidualBlock(nn.Module):
         self.conv3 = Conv_BN(hidden_dim, out_channels, 1, 1, 0)
 
     def forward(self, x):
-        return self.conv3(self.act2(self.conv2(self.act1(self.conv1(x)))))
+        return self.conv3(self.se(self.conv2(self.act1(self.conv1(x)))))
 
 
 class TokenInteractionBlock(nn.Module):
@@ -263,12 +264,21 @@ class SubSamplingBlock(nn.Module):
             x = self.ffn2[i](x)
         return x
 
-"""
-LocalWindowAttention
-author: cxk
-"""
 
 class LocalWindowAttention(torch.nn.Module):
+    """
+    LocalWindowAttention
+    author: lostboiii
+    Args:
+        channels (str): Number of input channels.
+        qk_dim (int): Dimension for query and key in the token mixer.
+        v_dim (int):
+        num_heads (int): Number of attention heads.
+        ar (int): Multiplier for the query dim for value dimension.
+        resolution (int): Input resolution.
+        window_resolution (int): Local window resolution.
+        q_kernel_size (List[int]): The kernel size of the dw conv on query.
+    """
     def __init__(self, channels, qk_dim, v_dim, num_heads=8,
                  resolution=14,
                  window_resolution=7,
@@ -320,8 +330,8 @@ class LocalWindowAttention(torch.nn.Module):
                 .reshape(B, H, W, C)
             )
             if padding:
-                x = x[:, :H-pad_b, :W-pad_r].contiguous()
-            x = x.permute(0, 3, 1, 2)
+                x = x[:, :H-pad_b, :W-pad_r]
+            x = x.permute(0, 3, 1, 2).contiguous() # transpose(),permute(),view()等操作会导致tensor内存不连续
         return x
 
 
@@ -452,7 +462,7 @@ class OutputLayer(nn.Module):
         return x
 
 
-class EfficientViT(nn.Module):
+class myEfficientViT(nn.Module):
     def __init__(self,
                  img_size=224,
                  patch_size=16,
