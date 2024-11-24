@@ -366,28 +366,25 @@ class CascadedGroupAttention(nn.Module):
         w_list = torch.arange(resolution)
         coords = torch.meshgrid([h_list, w_list])
         coords = torch.stack(coords)
-        coords = torch.flatten(coords, 1)
-        coords1 = coords[:, :, None]
-        coords2 = coords[:, None, :]
-        relative_coords = abs(coords1 - coords2)
+        points = coords.permute(1, 2, 0).reshape(-1, 2).tolist()
+
         # relative positions denote by index
         relative_positions = []
         # relative positions map to index
         relative_positions_index = {}
-        cnt = 0
-        for i in torch.arange(resolution):
-            for j in torch.arange(resolution):
-                cur_rc = (relative_coords[0][i][j], relative_coords[1][i][j])
-                if cur_rc not in relative_positions_index:
-                    relative_positions_index[cur_rc] = cnt
-                    cnt += 1
-                relative_positions.append(cnt)
+
+        for p1 in points:
+            for p2 in points:
+                offset = (abs(p1[0] - p2[0]), abs(p1[1] - p2[1]))
+                if offset not in relative_positions_index:
+                    relative_positions_index[offset] = len(relative_positions_index)
+                relative_positions.append(relative_positions_index[offset])
         # trainable parameter, maps index to attention bias
         self.attention_bias = nn.Parameter(torch.zeros(num_heads, len(relative_positions_index)))
         self.inference_attention_bias = None
         # relative position index matrix of input
         self.register_buffer('relative_positions',
-                             torch.LongTensor(relative_positions).view(resolution, resolution))
+                             torch.LongTensor(relative_positions).view(num_points, num_points))
 
     @torch.no_grad()
     def train(self, mode=True):
