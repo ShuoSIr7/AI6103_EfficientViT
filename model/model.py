@@ -462,7 +462,7 @@ class OutputLayer(nn.Module):
         return x
 
 
-class myEfficientViT(nn.Module):
+class EfficientViT(nn.Module):
     def __init__(self,
                  img_size=224,
                  patch_size=16,
