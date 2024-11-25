@@ -50,6 +50,8 @@ class Conv_BN(nn.Module):
     def forward(self, x):
         if self.fused_conv is not None:
             return self.fused_conv(x)
+
+        #print(f"x:{x.device},w:{self.bn.weight.device},b:{self.bn.bias.device}")
         return self.bn(self.conv(x))
 
     # call this before inference
@@ -232,7 +234,7 @@ class TokenInteractionBlock(nn.Module):
     def __init__(self, channels, kernel_size=3, bn_init_weight=1.):
         super(TokenInteractionBlock, self).__init__()
         # padding is set to [kernel//2] to make sure input and output share same dimension
-        self.dwconv = Conv_BN(channels, channels, kernel_size, 1, kernel_size// 2, groups=channels, bn_init_weight=bn_init_weight)
+        self.dwconv = Conv_BN(channels, channels, kernel_size, 1, padding=kernel_size//2, groups=channels, bn_init_weight=bn_init_weight)
 
     def forward(self, x):
         return self.dwconv(x)
@@ -287,7 +289,7 @@ class CascadedGroupAttention(nn.Module):
             self.q.append(Conv_BN(self.att_dim, self.qk_dim))
             self.k.append(Conv_BN(self.att_dim, self.qk_dim))
             self.v.append(Conv_BN(self.att_dim, self.v_dim))
-            self.dwconv.append(TokenInteractionBlock(self.qk_dim, q_kernel_size))
+            self.dwconv.append(TokenInteractionBlock(self.qk_dim, q_kernel_size[0]))
 
             # calc relative position
             # gen coordinates
@@ -314,7 +316,7 @@ class CascadedGroupAttention(nn.Module):
         self.inference_attention_bias = None
         # relative position index matrix of input
         self.register_buffer('relative_positions',
-                             torch.LongTensor(relative_positions).view(num_points))
+                             torch.LongTensor(relative_positions).view(num_points,num_points))
 
     @torch.no_grad()
     def train(self, mode=True):
@@ -459,7 +461,7 @@ class OutputLayer(nn.Module):
         return x
 
 
-class EfficientViT(nn.Module):
+class MyEfficientViT(nn.Module):
     def __init__(self,
                  img_size=224,
                  patch_size=16,
