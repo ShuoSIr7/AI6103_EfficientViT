@@ -232,7 +232,7 @@ class TokenInteractionBlock(nn.Module):
     def __init__(self, channels, kernel_size=3, bn_init_weight=1.):
         super(TokenInteractionBlock, self).__init__()
         # padding is set to [kernel//2] to make sure input and output share same dimension
-        self.dwconv = Conv_BN(channels, channels, kernel_size, 1, kernel_size // 2, groups=channels, bn_init_weight=bn_init_weight)
+        self.dwconv = Conv_BN(channels, channels, kernel_size, 1, kernel_size// 2, groups=channels, bn_init_weight=bn_init_weight)
 
     def forward(self, x):
         return self.dwconv(x)
@@ -262,6 +262,96 @@ class SubSamplingBlock(nn.Module):
         for i in range(self.ffn_depth):
             x = self.interact2[i](x)
             x = self.ffn2[i](x)
+        return x
+
+
+class CascadedGroupAttention(nn.Module):
+    def __init__(self, channels, qk_dim, v_dim, num_heads, q_kernel_size, resolution):
+        super(CascadedGroupAttention, self).__init__()
+        self.channels = channels
+        self.qk_dim = qk_dim
+        self.v_dim = int(v_dim)
+        self.num_heads = num_heads
+        # pre_calculate
+        self.sqrtd = self.qk_dim ** -0.5
+        assert self.channels % self.num_heads == 0, "channels should be divisible by group"
+        self.att_dim = self.channels // self.num_heads
+        self.q = []
+        self.dwconv = []
+        self.k = []
+        self.v = []
+        self.p = Conv_BN(self.num_heads * self.v_dim, channels, bn_init_weight=0.)
+        self.act = nn.ReLU()
+
+        for _ in range(num_heads):
+            self.q.append(Conv_BN(self.att_dim, self.qk_dim))
+            self.k.append(Conv_BN(self.att_dim, self.qk_dim))
+            self.v.append(Conv_BN(self.att_dim, self.v_dim))
+            self.dwconv.append(TokenInteractionBlock(self.qk_dim, q_kernel_size))
+
+            # calc relative position
+            # gen coordinates
+        num_points = resolution * resolution
+        h_list = torch.arange(resolution)
+        w_list = torch.arange(resolution)
+        coords = torch.meshgrid([h_list, w_list])
+        coords = torch.stack(coords)
+        points = coords.permute(1, 2, 0).reshape(-1, 2).tolist()
+
+        # relative positions denote by index
+        relative_positions = []
+        # relative positions map to index
+        relative_positions_index = {}
+
+        for p1 in points:
+            for p2 in points:
+                offset = (abs(p1[0] - p2[0]), abs(p1[1] - p2[1]))
+                if offset not in relative_positions_index:
+                    relative_positions_index[offset] = len(relative_positions_index)
+                relative_positions.append(relative_positions_index[offset])
+        # trainable parameter, maps index to attention bias
+        self.attention_bias = nn.Parameter(torch.zeros(num_heads, len(relative_positions_index)))
+        self.inference_attention_bias = None
+        # relative position index matrix of input
+        self.register_buffer('relative_positions',
+                             torch.LongTensor(relative_positions).view(num_points))
+
+    @torch.no_grad()
+    def train(self, mode=True):
+        super().train(mode)
+        # When in training mode, delete inference_attention_bias
+        if mode and hasattr(self, 'inference_attention_bias'):
+            del self.inference_attention_bias
+        else:
+            # Advanced Indexing
+            self.inference_attention_bias = self.attention_bias[:, self.relative_positions]
+
+    def forward(self, x):
+        # attention_biases will be trained but
+        bias = self.attention_bias[:, self.relative_positions]
+        B, C, H, W = x.shape
+        # B*C/n*H*W
+        att_in = x.chunk(self.num_heads, dim=1)
+        att_outs = []
+        for i in range(self.num_heads):
+            if i > 0:
+                att_in = att_in + att_outs[i - 1]
+            # B*C*H*W
+            q = self.dwconv[i](self.q[i](x))
+            k = self.k[i](x)
+            v = self.v[i](x)
+            # BCHW -> BC(HW)
+            q, k, v = q.flatten(2), k.flatten(2), v.flatten(2)
+            # BC(HW) * B(HW)C -> B(HW)(HW)
+            qk = q.transpose(1, 2) * k * self.sqrtd + (bias[i] if self.training else self.inference_attention_bias[i])
+            # B(HW)(HW)
+            qk = qk.softmax(dim=-1)
+            # BC(HW) * B(HW)(HW) -> BC(HW) ->BCHW
+            att_out = (v * qk.transpose(1, 2)).view(B, v.size(1), H, W)
+            att_outs.append(att_out)
+        x = torch.cat(att_outs, dim=1)
+        x = self.act(x)
+        x = self.p(x)
         return x
 
 
@@ -332,96 +422,6 @@ class LocalWindowAttention(torch.nn.Module):
             if padding:
                 x = x[:, :H-pad_b, :W-pad_r]
             x = x.permute(0, 3, 1, 2).contiguous() # transpose(),permute(),view()等操作会导致tensor内存不连续
-        return x
-
-
-class CascadedGroupAttention(nn.Module):
-    def __init__(self, channels, qk_dim, v_dim, num_heads, q_kernel_size, resolution):
-        super(CascadedGroupAttention, self).__init__()
-        self.channels = channels
-        self.qk_dim = qk_dim
-        self.v_dim = v_dim
-        self.num_heads = num_heads
-        # pre_calculate
-        self.sqrtd = self.qk_dim ** -0.5
-        assert self.channels % self.num_heads == 0, "channels should be divisible by group"
-        self.att_dim = self.channels // self.num_heads
-        self.q = []
-        self.dwconv = []
-        self.k = []
-        self.v = []
-        self.p = Conv_BN(self.num_heads * self.v_dim, channels, bn_init_weight=0.)
-        self.act = nn.ReLU()
-
-        for _ in range(num_heads):
-            self.q.append(Conv_BN(self.att_dim, self.qk_dim))
-            self.k.append(Conv_BN(self.att_dim, self.qk_dim))
-            self.v.append(Conv_BN(self.att_dim, self.v_dim))
-            self.dwconv.append(TokenInteractionBlock(self.qk_dim, q_kernel_size))
-
-        # calc relative position
-        # gen coordinates
-        num_points = resolution * resolution
-        h_list = torch.arange(resolution)
-        w_list = torch.arange(resolution)
-        coords = torch.meshgrid([h_list, w_list])
-        coords = torch.stack(coords)
-        points = coords.permute(1, 2, 0).reshape(-1, 2).tolist()
-
-        # relative positions denote by index
-        relative_positions = []
-        # relative positions map to index
-        relative_positions_index = {}
-
-        for p1 in points:
-            for p2 in points:
-                offset = (abs(p1[0] - p2[0]), abs(p1[1] - p2[1]))
-                if offset not in relative_positions_index:
-                    relative_positions_index[offset] = len(relative_positions_index)
-                relative_positions.append(relative_positions_index[offset])
-        # trainable parameter, maps index to attention bias
-        self.attention_bias = nn.Parameter(torch.zeros(num_heads, len(relative_positions_index)))
-        self.inference_attention_bias = None
-        # relative position index matrix of input
-        self.register_buffer('relative_positions',
-                             torch.LongTensor(relative_positions).view(num_points, num_points))
-
-    @torch.no_grad()
-    def train(self, mode=True):
-        super().train(mode)
-        # When in training mode, delete inference_attention_bias
-        if mode and hasattr(self, 'inference_attention_bias'):
-            del self.inference_attention_bias
-        else:
-            # Advanced Indexing
-            self.inference_attention_bias = self.attention_bias[:, self.relative_positions]
-
-    def forward(self, x):
-        # attention_biases will be trained but
-        bias = self.attention_bias[:, self.relative_positions]
-        B, C, H, W = x.shape
-        # B*C/n*H*W
-        att_in = x.chunk(self.num_heads, dim=1)
-        att_outs = []
-        for i in range(self.num_heads):
-            if i > 0:
-                att_in = att_in + att_outs[i - 1]
-            # B*C*H*W
-            q = self.dwconv[i](self.q[i](x))
-            k = self.k[i](x)
-            v = self.v[i](x)
-            # BCHW -> BC(HW)
-            q, k, v = q.flatten(2), k.flatten(2), v.flatten(2)
-            # BC(HW) * B(HW)C -> B(HW)(HW)
-            qk = q.transpose(1, 2) * k * self.sqrtd + (bias[i] if self.training else self.inference_attention_bias[i])
-            # B(HW)(HW)
-            qk = qk.softmax(dim=-1)
-            # BC(HW) * B(HW)(HW) -> BC(HW) ->BCHW
-            att_out = (v * qk.transpose(1, 2)).view(B, v.size(1), H, W)
-            att_outs.append(att_out)
-        x = torch.cat(att_outs, dim=1)
-        x = self.act(x)
-        x = self.p(x)
         return x
 
 
