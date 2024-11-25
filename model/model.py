@@ -257,12 +257,12 @@ class SubSamplingBlock(nn.Module):
     def __init__(self, in_channels, output_channels, ffn_depth):
         super().__init__()
         self.ffn_depth = ffn_depth
-        self.interact1 = nn.ModuleList([Residual(TokenInteractionBlock(in_channels)) for _ in self.ffn_depth])
-        self.ffn1 = nn.ModuleList([Residual(FFN(in_channels)) for _ in self.ffn_depth])
+        self.interact1 = nn.ModuleList([Residual(TokenInteractionBlock(in_channels)) for _ in range(self.ffn_depth)])
+        self.ffn1 = nn.ModuleList([Residual(FFN(in_channels)) for _ in range(self.ffn_depth)])
         # res connection unavailable due to different input and output channel
         self.dwconv = InvertedResidualBlock(in_channels, output_channels)
-        self.interact2 = nn.ModuleList([Residual(TokenInteractionBlock(output_channels)) for _ in self.ffn_depth])
-        self.ffn2 = nn.ModuleList([Residual(FFN(output_channels)) for _ in self.ffn_depth])
+        self.interact2 = nn.ModuleList([Residual(TokenInteractionBlock(output_channels)) for _ in range(self.ffn_depth)])
+        self.ffn2 = nn.ModuleList([Residual(FFN(output_channels)) for _ in range(self.ffn_depth)])
 
     def forward(self, x):
         for i in range(self.ffn_depth):
