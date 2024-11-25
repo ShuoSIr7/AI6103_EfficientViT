@@ -439,11 +439,11 @@ class EfficientVitBlock(nn.Module):
     def __init__(self, channels, qk_dim, v_dim, num_heads, resolution, window_resolution, q_kernel_size, ffn_depth):
         super().__init__()
         self.ffn_depth = ffn_depth
-        self.interact1 = [Residual(TokenInteractionBlock(channels, bn_init_weight=0)) for _ in range(self.ffn_depth)]
-        self.ffn1 = [Residual(FFN(channels)) for _ in range(self.ffn_depth)]
+        self.interact1 = nn.ModuleList([Residual(TokenInteractionBlock(channels, bn_init_weight=0)) for _ in range(self.ffn_depth)])
+        self.ffn1 = nn.ModuleList([Residual(FFN(channels)) for _ in range(self.ffn_depth)])
         self.att = LocalWindowAttention(channels, qk_dim, v_dim, num_heads, resolution, window_resolution, q_kernel_size)
-        self.interact2 = [Residual(TokenInteractionBlock(channels, bn_init_weight=0)) for _ in range(self.ffn_depth)]
-        self.ffn2 = [Residual(FFN(channels)) for _ in range(self.ffn_depth)]
+        self.interact2 = nn.ModuleList([Residual(TokenInteractionBlock(channels, bn_init_weight=0)) for _ in range(self.ffn_depth)])
+        self.ffn2 = nn.ModuleList([Residual(FFN(channels)) for _ in range(self.ffn_depth)])
 
     def forward(self, x):
         for i in range(self.ffn_depth):
