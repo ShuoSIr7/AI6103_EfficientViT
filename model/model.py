@@ -286,11 +286,11 @@ class CascadedGroupAttention(nn.Module):
         self.sqrtd = self.qk_dim ** -0.5
         assert self.channels % self.num_heads == 0, "channels should be divisible by group"
         self.att_dim = self.channels // self.num_heads
-        self.q = []
-        self.dwconv = []
-        self.k = []
-        self.v = []
-        self.p = Conv_BN(self.num_heads * self.v_dim, channels, bn_init_weight=0.)
+        self.q = nn.ModuleList()
+        self.dwconv = nn.ModuleList()
+        self.k = nn.ModuleList()
+        self.v = nn.ModuleList()
+        self.p = Conv_BN(self.num_heads * self.v_dim, channels, bn_init_weight=0)
         self.act = nn.ReLU()
 
         for _ in range(num_heads):
@@ -343,13 +343,14 @@ class CascadedGroupAttention(nn.Module):
         # B*C/n*H*W
         att_in = x.chunk(self.num_heads, dim=1)
         att_outs = []
+        att = att_in[0]
         for i in range(self.num_heads):
             if i > 0:
-                att_in = att_in + att_outs[i - 1]
+                att = att + att_in[i]
             # B*C*H*W
-            q = self.dwconv[i](self.q[i](x))
-            k = self.k[i](x)
-            v = self.v[i](x)
+            q = self.dwconv[i](self.q[i](att))
+            k = self.k[i](att)
+            v = self.v[i](att)
             # BCHW -> BC(HW)
             q, k, v = q.flatten(2), k.flatten(2), v.flatten(2)
             # BC(HW) * B(HW)C -> B(HW)(HW)
@@ -357,8 +358,8 @@ class CascadedGroupAttention(nn.Module):
             # B(HW)(HW)
             qk = qk.softmax(dim=-1)
             # BC(HW) * B(HW)(HW) -> BC(HW) ->BCHW
-            att_out = (v * qk.transpose(1, 2)).view(B, v.size(1), H, W)
-            att_outs.append(att_out)
+            att = (v * qk.transpose(1, 2)).view(B, v.size(1), H, W)
+            att_outs.append(att)
         x = torch.cat(att_outs, dim=1)
         x = self.act(x)
         x = self.p(x)
