@@ -4,7 +4,7 @@ This repository provides a reimplementation of **EfficientViT**, a state-of-the-
 
 ## Overview
 
-EfficientViT is an efficient Vision Transformer (ViT) model designed for scalable and faster training on large datasets like ImageNet. This implementation follows the original architecture and training strategy, with a few optimizations for ease of use and better performance. The repository consists of two main components:
+To train an EfficicentViT-M0 on ImageNet100 and reproduce the results, you can simply run:
 
 1. **`data_downloader.py`**: A script to download the ImageNet-100 dataset from Hugging Face.
 2. **`dist_train.py`**: A script to train the model from scratch using the downloaded dataset.
