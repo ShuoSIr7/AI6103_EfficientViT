@@ -1,6 +1,6 @@
 # This repository is a reimplementation of EfficientViT
 
-This repository provides a reimplementation of **EfficientViT**, a state-of-the-art vision transformer model designed for high performance and efficiency in image classification tasks.
+This repository provides a reimplementation of **EfficientViT-M0**, one of the high-speed vision transformers famlies designed to address the computational challenges of traditional Vision Transformers. 
 
 ## Overview
 
