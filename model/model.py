@@ -358,7 +358,7 @@ class CascadedGroupAttention(nn.Module):
             # B(HW)(HW)
             qk = qk.softmax(dim=-1)
             # BC(HW) * B(HW)(HW) -> BC(HW) ->BCHW
-            att = (v * qk.transpose(1, 2)).view(B, v.size(1), H, W)
+            att = (v @ qk.transpose(1, 2)).view(B, v.size(1), H, W)
             att_outs.append(att)
         x = torch.cat(att_outs, dim=1)
         x = self.act(x)
