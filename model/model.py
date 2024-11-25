@@ -72,7 +72,7 @@ class Conv_BN(nn.Module):
         weight_bn = bn.weight / torch.sqrt(bn.running_var + bn.eps)
         fused_conv.weight = nn.Parameter(conv.weight * weight_bn.view(-1, 1, 1, 1))
         fused_conv.bias = nn.Parameter(bn.bias - bn.running_mean * weight_bn)
-        self.fused_conv = fused_conv
+        self.fused_conv = fused_conv.to(self.conv.weight.device)
 
     # call this before training
     def reset_fuse(self):
@@ -111,7 +111,7 @@ class BN_Linear(nn.Module):
 
             fused_linear.weight = nn.Parameter(linear.weight * weight_bn.view(1, -1))
             fused_linear.bias = nn.Parameter(linear.bias + torch.matmul(linear.weight, bias_bn))
-            self.fused_linear = fused_linear
+            self.fused_linear = fused_linear.to(self.linear.weight.device)
 
     def reset_fuse(self):
         self.fused_linear = None
