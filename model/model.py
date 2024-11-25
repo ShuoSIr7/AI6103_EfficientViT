@@ -105,7 +105,7 @@ class BN_Linear(nn.Module):
             self.fuse()
         if self.fused_linear is not None:
             return self.fused_linear(x)
-        return self.bn(self.linear(x))
+        return self.linear(self.bn(x))
 
     @torch.no_grad()
     def fuse(self):
