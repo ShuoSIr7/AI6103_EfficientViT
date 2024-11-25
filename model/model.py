@@ -50,7 +50,7 @@ class Conv_BN(nn.Module):
     def forward(self, x):
         if self.training:
             self.reset_fuse()
-        else:
+        elif self.fused_conv is None:
             self.fuse()
         if self.fused_conv is not None:
             return self.fused_conv(x)
@@ -95,13 +95,11 @@ class BN_Linear(nn.Module):
         self.fused_linear = None
         # initialize linear the same way as ViT
         nn.init.trunc_normal_(self.linear.weight, std=.02)
-        #if bias:
-        #    torch.nn.init.constant_(self.linear.bias, 0)
 
     def forward(self, x):
         if self.training:
             self.reset_fuse()
-        else:
+        elif self.fused_linear is None:
             self.fuse()
         if self.fused_linear is not None:
             return self.fused_linear(x)
