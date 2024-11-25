@@ -186,7 +186,7 @@ class Residual(nn.Module):
 
     def forward(self, x):
         if self.training and self.dropout > 0:
-            mask = torch.rand(x.shape, device=x.device)
+            mask = torch.rand(x.size(0), 1, 1, 1, device=x.device)
             x = x + self.f(x) * mask.ge_(self.dropout).div(1 - self.dropout).detach()
         else:
             x = x + self.f(x)
