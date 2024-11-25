@@ -28,7 +28,7 @@ class Conv_BN(nn.Module):
 
     # TODO: I don't know how to initialize gamma in BN, so I keep the parameter but don't use it.
     def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1,
-                 groups=1, bn_init_weight=1.):
+                 groups=1, bn_init_weight=1):
         super().__init__()
         self.conv = nn.Conv2d(
             in_channels=in_channels,
@@ -48,6 +48,10 @@ class Conv_BN(nn.Module):
         nn.init.constant_(self.bn.bias, 0)
 
     def forward(self, x):
+        if self.training:
+            self.reset_fuse()
+        else:
+            self.fuse()
         if self.fused_conv is not None:
             return self.fused_conv(x)
 
@@ -95,6 +99,10 @@ class BN_Linear(nn.Module):
         #    torch.nn.init.constant_(self.linear.bias, 0)
 
     def forward(self, x):
+        if self.training:
+            self.reset_fuse()
+        else:
+            self.fuse()
         if self.fused_linear is not None:
             return self.fused_linear(x)
         return self.bn(self.linear(x))
@@ -231,7 +239,7 @@ class TokenInteractionBlock(nn.Module):
     Default kernel size is 3, but may be different in different places. (After Attention Query or Before FFN)
     """
 
-    def __init__(self, channels, kernel_size=3, bn_init_weight=1.):
+    def __init__(self, channels, kernel_size=3, bn_init_weight=1):
         super(TokenInteractionBlock, self).__init__()
         # padding is set to [kernel//2] to make sure input and output share same dimension
         self.dwconv = Conv_BN(channels, channels, kernel_size, 1, padding=kernel_size//2, groups=channels, bn_init_weight=bn_init_weight)
@@ -431,11 +439,11 @@ class EfficientVitBlock(nn.Module):
     def __init__(self, channels, qk_dim, v_dim, num_heads, resolution, window_resolution, q_kernel_size, ffn_depth):
         super().__init__()
         self.ffn_depth = ffn_depth
-        self.interact1 = [Residual(TokenInteractionBlock(channels, bn_init_weight=0.))] * self.ffn_depth
-        self.ffn1 = [Residual(FFN(channels))] * self.ffn_depth
+        self.interact1 = [Residual(TokenInteractionBlock(channels, bn_init_weight=0)) for _ in range(self.ffn_depth)]
+        self.ffn1 = [Residual(FFN(channels)) for _ in range(self.ffn_depth)]
         self.att = LocalWindowAttention(channels, qk_dim, v_dim, num_heads, resolution, window_resolution, q_kernel_size)
-        self.interact2 = [Residual(TokenInteractionBlock(channels, bn_init_weight=0.))] * self.ffn_depth
-        self.ffn2 = [Residual(FFN(channels))] * self.ffn_depth
+        self.interact2 = [Residual(TokenInteractionBlock(channels, bn_init_weight=0)) for _ in range(self.ffn_depth)]
+        self.ffn2 = [Residual(FFN(channels)) for _ in range(self.ffn_depth)]
 
     def forward(self, x):
         for i in range(self.ffn_depth):
