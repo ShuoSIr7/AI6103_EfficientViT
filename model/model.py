@@ -354,7 +354,7 @@ class CascadedGroupAttention(nn.Module):
             # BCHW -> BC(HW)
             q, k, v = q.flatten(2), k.flatten(2), v.flatten(2)
             # BC(HW) * B(HW)C -> B(HW)(HW)
-            qk = q.transpose(1, 2) * k * self.sqrtd + (bias[i] if self.training else self.inference_attention_bias[i])
+            qk = (q.transpose(1, 2) @ k) * self.sqrtd + (bias[i] if self.training else self.inference_attention_bias[i])
             # B(HW)(HW)
             qk = qk.softmax(dim=-1)
             # BC(HW) * B(HW)(HW) -> BC(HW) ->BCHW
