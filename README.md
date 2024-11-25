@@ -1,10 +1,10 @@
 # This repository is a reimplementation of EfficientViT
 
-This repository provides a reimplementation of **EfficientViT-M0**, one of the high-speed vision transformers famlies designed to address the computational challenges of traditional Vision Transformers. 
+This repository provides a reimplementation of EfficientViT-M0, one of the high-speed vision transformers famlies designed to address the computational challenges of traditional Vision Transformers. 
 
 ## Overview
 
-To train an EfficicentViT-M0 on ImageNet100 and reproduce the results, you can simply run:
+To train an **EfficicentViT-M0** on **ImageNet100** dataset and reproduce the results, you can simply run:
 
 1. **`data_downloader.py`**: A script to download the ImageNet-100 dataset from Hugging Face.
 2. **`dist_train.py`**: A script to train the model from scratch using the downloaded dataset.
